@@ -1,0 +1,14 @@
+debug
+allow mime text/javascript
+allow mime text/css
+allow mime image/jpeg
+allow mime image/png
+allow mime image/gif
+allow mime application/octet-stream
+safeGet Detach/C/callback
+safeGet Detach/download
+database dbname=Detach
+library ./../urweb-callback
+sql ./Detach.sql
+
+./Detach

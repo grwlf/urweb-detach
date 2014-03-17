@@ -1,0 +1,260 @@
+# HG changeset patch
+# User Sergey Mironov <grrwlf@gmail.com>
+# Date 1395057284 0
+#      Mon Mar 17 11:54:44 2014 +0000
+# Node ID fe74a29cd7d7fe47f1abad9ffb77bf9c9490cd9e
+# Parent  26bd8f1e0b8ee980e971a090350209a018975375
+Introduce 'Detach' mechanism.
+
+Sockets may be detched from the UrWeb handler. Urweb should not write anything
+to the detached socket. Client code should process the response by itself. The
+primary use case - serve large files in the separate thead after authentication.
+
+diff --git a/include/urweb/types_cpp.h b/include/urweb/types_cpp.h
+--- a/include/urweb/types_cpp.h
++++ b/include/urweb/types_cpp.h
+@@ -21,6 +21,8 @@
+ typedef int uw_unit;
+ typedef uw_unit uw_Basis_unit;
+ 
++typedef int uw_Basis_socket;
++
+ typedef enum uw_Basis_bool { uw_Basis_False, uw_Basis_True } uw_Basis_bool;
+ 
+ typedef uw_Basis_string uw_Basis_xhtml;
+@@ -56,7 +58,7 @@
+ 
+ typedef enum { SUCCESS, FATAL, BOUNDED_RETRY, UNLIMITED_RETRY, RETURN_INDIRECTLY } failure_kind;
+ 
+-typedef enum { SERVED, KEEP_OPEN, FAILED } request_result;
++typedef enum { SERVED, KEEP_OPEN, FAILED, DETACHED } request_result;
+ 
+ #define INTS_MAX 50
+ #define FLOATS_MAX 100
+diff --git a/include/urweb/urweb_cpp.h b/include/urweb/urweb_cpp.h
+--- a/include/urweb/urweb_cpp.h
++++ b/include/urweb/urweb_cpp.h
+@@ -91,6 +91,10 @@
+ void uw_set_needs_sig(struct uw_context *, int);
+ void uw_set_could_write_db(struct uw_context *, int);
+ 
++int uw_is_detached(struct uw_context *);
++void uw_set_sock(struct uw_context *ctx, int sock);
++uw_Basis_int uw_Basis_detachSocket(struct uw_context *ctx);
++
+ char *uw_Basis_htmlifyInt(struct uw_context *, uw_Basis_int);
+ char *uw_Basis_htmlifyFloat(struct uw_context *, uw_Basis_float);
+ char *uw_Basis_htmlifyString(struct uw_context *, uw_Basis_string);
+diff --git a/lib/ur/basis.urs b/lib/ur/basis.urs
+--- a/lib/ur/basis.urs
++++ b/lib/ur/basis.urs
+@@ -207,6 +207,10 @@
+ val checkEnvVar : string -> option envVar
+ val getenv : envVar -> transaction (option string)
+ 
++(* Socket detachment interface *)
++type socket
++val detachSocket : transaction socket
++val show_socket : show socket
+ 
+ (** JavaScript-y gadgets *)
+ 
+diff --git a/src/c/http.c b/src/c/http.c
+--- a/src/c/http.c
++++ b/src/c/http.c
+@@ -243,52 +243,58 @@
+                         NULL, log_error, log_debug,
+                         sock, uw_really_send, close);
+ 
+-        if (rr != KEEP_OPEN) {
+-          if (keepalive) {
+-            char *connection = uw_Basis_requestHeader(ctx, "Connection");
++        if (rr == DETACHED) {
++          fprintf(stderr, "Detached connection: %d\n", sock);
++          sock = 0;
++        }
++        else {
++          if (rr != KEEP_OPEN) {
++            if (keepalive) {
++              char *connection = uw_Basis_requestHeader(ctx, "Connection");
+ 
+-            should_keepalive = !(connection && !strcmp(connection, "close"));
++              should_keepalive = !(connection && !strcmp(connection, "close"));
++            }
++
++            if (!should_keepalive)
++              uw_write_header(ctx, "Connection: close\r\n");
++
++            if (!uw_has_contentLength(ctx)) {
++              char clen[100];
++
++              sprintf(clen, "Content-length: %d\r\n", uw_pagelen(ctx));
++              uw_write_header(ctx, clen);
++            }
++
++            uw_send(ctx, sock);
+           }
+ 
+-          if (!should_keepalive)
+-            uw_write_header(ctx, "Connection: close\r\n");
++          if (rr == SERVED || rr == FAILED) {
++            if (should_keepalive) {
++              // In case any other requests are queued up, shift
++              // unprocessed part of buffer to front.
++              int kept = back - after;
+ 
+-          if (!uw_has_contentLength(ctx)) {
+-            char clen[100];
+-
+-            sprintf(clen, "Content-length: %d\r\n", uw_pagelen(ctx));
+-            uw_write_header(ctx, clen);
+-          }
+-
+-          uw_send(ctx, sock);
++              if (kept == 0) {
++                // No pipelining going on here.
++                // We'd might as well try to switch to a different connection,
++                // while we wait for more input on this one.
++                uw_enqueue(sock);
++                sock = 0;
++              } else {
++                // More input!  Move it to the front and continue in this loop.
++                memmove(buf, after, kept);
++                back = buf + kept;
++              }
++            } else {
++              close(sock);
++              sock = 0;
++            }
++          } else if (rr == KEEP_OPEN)
++            sock = 0;
++          else
++            fprintf(stderr, "Illegal uw_request return code: %d\n", rr);
+         }
+ 
+-        if (rr == SERVED || rr == FAILED) {
+-          if (should_keepalive) {
+-            // In case any other requests are queued up, shift
+-            // unprocessed part of buffer to front.
+-            int kept = back - after;
+-
+-            if (kept == 0) {
+-              // No pipelining going on here.
+-              // We'd might as well try to switch to a different connection,
+-              // while we wait for more input on this one.
+-              uw_enqueue(sock);
+-              sock = 0;
+-            } else {
+-              // More input!  Move it to the front and continue in this loop.
+-              memmove(buf, after, kept);
+-              back = buf + kept;
+-            }
+-          } else {
+-            close(sock);
+-            sock = 0;
+-          }
+-        } else if (rr == KEEP_OPEN)
+-          sock = 0;
+-        else
+-          fprintf(stderr, "Illegal uw_request return code: %d\n", rr);
+-
+         break;
+       }
+     }
+diff --git a/src/c/request.c b/src/c/request.c
+--- a/src/c/request.c
++++ b/src/c/request.c
+@@ -473,6 +473,7 @@
+ 
+   while (1) {
+     uw_setQueryString(ctx, rc->queryString);
++    uw_set_sock(ctx, sock);
+ 
+     if (!had_error) {
+       size_t path_len = strlen(path);
+@@ -513,8 +514,12 @@
+ 
+           return FAILED;
+         }
+-      } else
+-        return had_error ? FAILED : SERVED;
++      } else {
++        if (had_error)
++          return FAILED;
++        else
++          return uw_is_detached(ctx) ? DETACHED : SERVED;
++      }
+     } else if (fk == BOUNDED_RETRY) {
+       if (retries_left) {
+         log_debug(logger_data, "Error triggers bounded retry: %s\n", uw_error_message(ctx));
+diff --git a/src/c/urweb.c b/src/c/urweb.c
+--- a/src/c/urweb.c
++++ b/src/c/urweb.c
+@@ -476,6 +476,9 @@
+ 
+   char *output_buffer;
+   size_t output_buffer_size;
++
++  int sock;
++  int sock_detached;
+ };
+ 
+ size_t uw_headers_max = SIZE_MAX;
+@@ -558,6 +561,9 @@
+   ctx->output_buffer = malloc(1);
+   ctx->output_buffer_size = 1;
+ 
++  ctx->sock = -1;
++  ctx->sock_detached = -1;
++
+   return ctx;
+ }
+ 
+@@ -626,6 +632,26 @@
+   free(ctx);
+ }
+ 
++int uw_is_detached(uw_context ctx) {
++  return ctx->sock_detached >= 0;
++}
++
++void uw_set_sock(uw_context ctx, int sock) {
++  assert(ctx->sock < 0);
++  ctx->sock_detached = -1;
++  ctx->sock = sock;
++}
++
++uw_Basis_int uw_Basis_detachSocket(uw_context ctx) {
++  if(ctx->sock_detached < 0) {
++    if(ctx->sock < 0)
++      uw_error(ctx, FATAL, "Socket detachment is not supported in this context");
++    ctx->sock_detached = ctx->sock;
++    ctx->sock = -1;
++  }
++  return ctx->sock_detached;
++}
++
+ void uw_reset_keep_error_message(uw_context ctx) {
+   uw_buffer_reset(&ctx->outHeaders);
+   uw_buffer_reset(&ctx->script);
+@@ -645,6 +671,8 @@
+   ctx->amInitializing = 0;
+   ctx->usedSig = 0;
+   ctx->needsResig = 0;
++  ctx->sock = -1;
++  ctx->sock_detached = -1;
+ }
+ 
+ void uw_reset_keep_request(uw_context ctx) {
+diff --git a/src/monoize.sml b/src/monoize.sml
+--- a/src/monoize.sml
++++ b/src/monoize.sml
+@@ -1241,6 +1241,8 @@
+             end
+           | L.EFfi ("Basis", "show_int") =>
+             ((L'.EFfi ("Basis", "intToString"), loc), fm)
++          | L.EFfi ("Basis", "show_socket") =>
++            ((L'.EFfi ("Basis", "intToString"), loc), fm)
+           | L.EFfi ("Basis", "show_float") =>
+             ((L'.EFfi ("Basis", "floatToString"), loc), fm)
+           | L.EFfi ("Basis", "show_string") =>
