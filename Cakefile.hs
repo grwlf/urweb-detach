@@ -21,7 +21,7 @@ project = do
     safeGet "Detach.ur" "C/callback"
     safeGet "Detach.ur" "download"
     database ("dbname="++(takeBaseName pn))
-    library' (externalMake "../urweb-callback/lib.urp")
+    library' (externalMake "urweb-callback/lib.urp")
     sql (pn.="sql")
     ur (pair "Detach.ur")
 

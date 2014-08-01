@@ -1,16 +1,9 @@
-structure C = Callback.Make(
-  struct
-    val f = fn x => return (<xml>{[x.Stdout]}</xml> : xbody)
-    val depth = 1000
-    val stdout_sz = 1024
-  end)
+structure C = Callback.Default
 
 fun download {} : transaction page =
   s <- detachSocket;
-  jr <- C.nextjob {};
-  debug "detached";
-  C.create jr ("./Serve.sh " ^ (show s)) (textBlob "");
-  return <xml> <body> detached page </body> </xml>
+  j <- C.create (C.shellCommand ("./Serve.sh " ^ (show s)));
+  return <xml><body>This is the detached page (will never be seen)</body></xml>
 
 fun main {} : transaction page = 
   return
@@ -18,7 +11,7 @@ fun main {} : transaction page =
       <body>
         Hello, detach
         <br/>
-        <a link={download {}}>Download something</a>
+        <a link={download {}}>Download something bulky</a>
       </body>
     </xml>
 

@@ -8,7 +8,7 @@ allow mime application/octet-stream
 safeGet Detach/C/callback
 safeGet Detach/download
 database dbname=Detach
-library ./../urweb-callback
+library ./urweb-callback
 sql ./Detach.sql
 
 ./Detach

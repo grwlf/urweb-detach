@@ -17,31 +17,28 @@ all: ./Detach.db ./Detach.exe ./Detach.sql ./Makefile
 	psql -f ./Detach.sql Detach
 	touch ./Detach.db
 ./Detach.exe: .fix-multy1
-./Detach.urp: ./../urweb-callback/lib.urp ./Detach.ur ./Detach.urs ./Makefile .cake3/tmp0
-	cat .cake3/tmp0 > ./Detach.urp
-.cake3/tmp0: ./Makefile
-	-rm -rf .cake3/tmp0
-	echo 'debug' >> .cake3/tmp0
-	echo 'allow mime text/javascript' >> .cake3/tmp0
-	echo 'allow mime text/css' >> .cake3/tmp0
-	echo 'allow mime image/jpeg' >> .cake3/tmp0
-	echo 'allow mime image/png' >> .cake3/tmp0
-	echo 'allow mime image/gif' >> .cake3/tmp0
-	echo 'allow mime application/octet-stream' >> .cake3/tmp0
-	echo 'safeGet Detach/C/callback' >> .cake3/tmp0
-	echo 'safeGet Detach/download' >> .cake3/tmp0
-	echo 'database dbname=Detach' >> .cake3/tmp0
-	echo 'library ./../urweb-callback' >> .cake3/tmp0
-	echo 'sql ./Detach.sql' >> .cake3/tmp0
-	echo '' >> .cake3/tmp0
-	echo './Detach' >> .cake3/tmp0
+./Detach.urp: ./Detach.ur ./Detach.urs ./Makefile ./urweb-callback/lib.urp .cake3/tmpDetach.in0
+	cat .cake3/tmpDetach.in0 > ./Detach.urp
+.cake3/tmpDetach.in0: ./Makefile
+	-rm -rf .cake3/tmpDetach.in0
+	echo 'debug' >> .cake3/tmpDetach.in0
+	echo 'allow mime text/javascript' >> .cake3/tmpDetach.in0
+	echo 'allow mime text/css' >> .cake3/tmpDetach.in0
+	echo 'allow mime image/jpeg' >> .cake3/tmpDetach.in0
+	echo 'allow mime image/png' >> .cake3/tmpDetach.in0
+	echo 'allow mime image/gif' >> .cake3/tmpDetach.in0
+	echo 'allow mime application/octet-stream' >> .cake3/tmpDetach.in0
+	echo 'safeGet Detach/C/callback' >> .cake3/tmpDetach.in0
+	echo 'safeGet Detach/download' >> .cake3/tmpDetach.in0
+	echo 'database dbname=Detach' >> .cake3/tmpDetach.in0
+	echo 'library ./urweb-callback' >> .cake3/tmpDetach.in0
+	echo 'sql ./Detach.sql' >> .cake3/tmpDetach.in0
+	echo '' >> .cake3/tmpDetach.in0
+	echo './Detach' >> .cake3/tmpDetach.in0
 ./Detach.sql: .fix-multy1
 .INTERMEDIATE: .fix-multy1
 .fix-multy1: ./Detach.urp ./Makefile $(call GUARD,URVERSION)
 	urweb -dbms postgres ./Detach
-.PHONY: clean
-clean: 
-	rm ./Detach.db ./Detach.exe ./Detach.sql ./Detach.urp .cake3/tmp0 .fix-multy1
 $(call GUARD,URVERSION):
 	rm -f .cake3/GUARD_URVERSION_*
 	touch $@
@@ -50,7 +47,7 @@ else
 
 # Prebuild/postbuild section
 
-export MAIN=1
+ifneq ($(MAKECMDGOALS),clean)
 
 .PHONY: all
 all: .fix-multy1
@@ -60,16 +57,20 @@ all: .fix-multy1
 ./Detach.exe: .fix-multy1
 .PHONY: ./Detach.urp
 ./Detach.urp: .fix-multy1
-.PHONY: .cake3/tmp0
-.cake3/tmp0: .fix-multy1
+.PHONY: .cake3/tmpDetach.in0
+.cake3/tmpDetach.in0: .fix-multy1
 .PHONY: ./Detach.sql
 ./Detach.sql: .fix-multy1
 .INTERMEDIATE: .fix-multy1
 .fix-multy1: 
 	-mkdir .cake3
-	$(MAKE) -C ./../urweb-callback -f Makefile
-	$(MAKE) -f ./Makefile $(MAKECMDGOALS)
+	$(MAKE) -C ./urweb-callback -f Makefile 
+	MAIN=1 $(MAKE) -f ./Makefile $(MAKECMDGOALS)
+
+endif
 .PHONY: clean
-clean: .fix-multy1
+clean: 
+	-rm ./Detach.db ./Detach.exe ./Detach.sql ./Detach.urp .cake3/tmpDetach.in0
+	-rm -rf .cake3
 
 endif
